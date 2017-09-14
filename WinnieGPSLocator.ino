@@ -15,7 +15,7 @@
 const char apn[]  = "hologram";
 const char user[] = "";
 const char pass[] = "";
-char http_cmd[] = "{\"k\": \"a1Djc>)t\",\"d\": \"hello from tcp test\",\"t\": [\"location\"]}";
+char http_cmd[] = "{\"k\": \"<CRED>",\"d\": \"hello from tcp test\",\"t\": [\"location\"]}";
 
 const char server[] = "cloudsocket.hologram.io";
 const int port = 9999;
