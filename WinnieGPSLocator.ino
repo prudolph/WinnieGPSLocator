@@ -7,6 +7,7 @@
 
 #include <TinyGsmClient.h>
 #include <SoftwareSerial.h>
+#include "Config.h"
 
 
 
@@ -15,24 +16,33 @@
 const char apn[]  = "hologram";
 const char user[] = "";
 const char pass[] = "";
-char http_cmd[] = "{\"k\": \"<CRED>",\"d\": \"hello from tcp test\",\"t\": [\"location\"]}";
+char http_cmd[] = "{\"k\": \"<CRED>\",\"d\": \"hello from tcp test\",\"t\": [\"location\"]}";
 
 const char server[] = "cloudsocket.hologram.io";
 const int port = 9999;
 
-char buffer[512];
-
+bool needGPSFix = false; 
 
 SoftwareSerial SerialAT(PIN_TX,PIN_RX ); // TX, RX
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 
+typedef struct{ String lat,lon; int spd;} Position;
+
 
 //signitures
 void enableCellPower(bool state);
+void connectToModem();
 void connectToNetwork();
+void disconnectModem();
+
+void enableGPS(bool state);
+Position getGPSPosition();
+Position getCellPosition();
+
+
 void setup(){
-    
+
     //Set Pin Modes
       pinMode(KEY_PIN, OUTPUT);  
       pinMode(PWR_PIN, INPUT);  
@@ -43,15 +53,27 @@ void setup(){
   Serial.begin(115200);
   delay(10);
 
+  Serial.print(F("Using Credentials: "));
+  Serial.println(CSR_Cred);
+  
   enableCellPower(true);
-  connectToNetwork();
+  connectToModem();
+  enableGPS(true);
 
+  connectToNetwork();
+  
+ // disconnectModem();
 
   
 }
 
 void loop(){
-
+  delay(5000);
+  
+  if(needGPSFix){
+      getGPSPosition();
+      getCellPosition();
+   }
 }
 
 
@@ -68,11 +90,8 @@ void enableCellPower(bool state){
     }
 }
 
-
-void connectToNetwork(){
-  
-  
-  // Set GSM module baud rate
+void connectToModem(){
+ // Set GSM module baud rate
   SerialAT.begin(9600);
   delay(3000);
 
@@ -84,8 +103,12 @@ void connectToNetwork(){
   String modemInfo = modem.getModemInfo();
   Serial.print(F("Modem: "));
   Serial.println(modemInfo);
+}
 
-  Serial.print(F("Waiting for network..."));
+
+void connectToNetwork(){
+ 
+  Serial.print(F("Connecting to network..."));
   if (!modem.waitForNetwork()) {
     Serial.println(F(" fail"));
     while (true);
@@ -99,6 +122,73 @@ void connectToNetwork(){
     while (true);
   }
   Serial.println(F(" OK"));
- 
-  
+
   }
+
+void disconnectModem(){
+    SerialAT.end();
+    modem.gprsDisconnect();
+  }
+
+
+ void enableGPS(bool state){
+  needGPSFix=state;
+  if(state)modem.enableGPS();
+  else modem.disableGPS();
+ }
+
+ 
+Position getGPSPosition(){
+    Serial.println(F(" Getting GPS Position"));
+
+    float lat,  lon, spd;
+    int alt, viewd_sats,  used_sats;
+      
+    
+      bool fix= modem.getGPS(&lat, &lon, &spd, &alt, &viewd_sats, &used_sats) ;
+      if(!fix){
+        Serial.println(F("Could Not get Satelite FIX...Retry"));        
+      }else{
+        enableGPS(false);
+      }
+  
+     Position pos;
+     pos.lat = lat;
+     pos.lon = lon;
+     pos.spd = spd;
+     
+      Serial.println(lat);
+      Serial.println(lon);
+      Serial.println(spd);
+      Serial.println(alt);
+      Serial.println(viewd_sats);
+      Serial.println(used_sats);
+
+    return pos;
+  }
+  
+Position getCellPosition(){
+  Serial.println(F(" Getting CELL Position"));
+  String gsmLoc = modem.getGsmLocation();
+  char gsmCharBuf[gsmLoc.length()+1];
+  gsmLoc.toCharArray(gsmCharBuf,gsmLoc.length()+1);
+  String results[5];
+
+  int resultIndex=0;
+  for (char *p = strtok(gsmCharBuf,","); p != NULL; p = strtok(NULL, ","))
+  {
+    results[resultIndex] = String(p);
+    resultIndex++;
+  }
+
+  for (int i =0;i<5;i++){
+  
+    Serial.println(results[i]);
+   
+  }
+  
+     Position pos;
+
+    return pos;
+  }
+
