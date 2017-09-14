@@ -4,17 +4,21 @@
 #define PIN_RX 2
 #define KEY_PIN 8
 #define PWR_PIN 7
+#define WAKE_PIN A0
 
 #include <TinyGsmClient.h>
 #include <SoftwareSerial.h>
 #include <ArduinoJson.h>
 
+#include "LowPower.h"
 #include "Config.h"
 
 // Your GPRS credentials
 const char apn[]  = "hologram";
 
 bool needGPSFix = false; 
+unsigned long IntervalTime = 40000;
+unsigned long StartTime;
 
 SoftwareSerial SerialAT(PIN_TX,PIN_RX ); // TX, RX
 TinyGsm modem(SerialAT);
@@ -30,10 +34,12 @@ void connectToNetwork();
 void disconnectModem();
 void postData(String dataStr);
 void sendLocationData();
-void enableGPS(bool state);
+
 Position getGPSPosition();
 Position getCellPosition();
 
+void wakeUp();
+void lowPowerMode();
 
 Position lastGPSPos,lastCELLPos;
 
@@ -42,21 +48,14 @@ void setup(){
     //Set Pin Modes
       pinMode(KEY_PIN, OUTPUT);  
       pinMode(PWR_PIN, INPUT);  
+      pinMode(WAKE_PIN, INPUT);  
       digitalWrite(KEY_PIN, HIGH);
 
       
   // Set console baud rate
   Serial.begin(115200);
   delay(10);
-
-  enableCellPower(true);
-  connectToModem();
-  enableGPS(true);
-
-  connectToNetwork();
-  
- // disconnectModem();
-
+  wakeUp();
   
 }
 
@@ -66,18 +65,26 @@ void loop(){
   if(needGPSFix){
       lastGPSPos=getGPSPosition();
       lastCELLPos=getCellPosition();
+      sendLocationData();
+
    }
 
-
-  sendLocationData();
-
-  delay(60000);
+    unsigned long CurrentTime = millis();
+    unsigned long ElapsedTime = CurrentTime - StartTime;
+     if(ElapsedTime>IntervalTime){
+      lowPowerMode();
+    }
+     Serial.println(ElapsedTime);
+ 
 }
 
 
 void enableCellPower(bool state){      
     int pwrState = digitalRead(PWR_PIN);
     if( pwrState!=state ){ 
+         Serial.print("Setting Power:");
+         Serial.println(state);
+ 
         digitalWrite(KEY_PIN, LOW);
         delay(2000);
         digitalWrite(KEY_PIN, HIGH);
@@ -168,19 +175,17 @@ void sendLocationData(){
     root.printTo(dataString);
     //postData(dataString);
   } 
-void disconnectModem(){
-    SerialAT.end();
-    modem.gprsDisconnect();
-  }
 
 
+/*
  void enableGPS(bool state){
   needGPSFix=state;
   if(state)modem.enableGPS();
   else modem.disableGPS();
  }
+ */
 
- 
+
 Position getGPSPosition(){
     float lat,  lon, spd;
     int alt, viewd_sats,  used_sats;
@@ -189,8 +194,6 @@ Position getGPSPosition(){
       bool fix= modem.getGPS(&lat, &lon, &spd, &alt, &viewd_sats, &used_sats) ;
       if(!fix){
         Serial.println(F("No Sat FIX...Retry"));        
-      }else{
-        enableGPS(false);
       }
   
      Position pos;
@@ -219,6 +222,29 @@ Position getCellPosition(){
     return pos;
   }
 
+void wakeUp(){   
+    Serial.println("Wakeup");
+   
+    StartTime = millis();
+   
+    enableCellPower(true);
+    connectToModem();
+    connectToNetwork();
+ }
 
+void lowPowerMode(){
+    Serial.println("Power Down");
+     modem.disableGPS();
+     modem.gprsDisconnect();
+     SerialAT.end();
+     enableCellPower(false);
+     
+    delay(5000);
+    // Triggers an infinite sleep (the device will be woken up only by the registered wakeup sources)
+    // The power consumption of the chip will drop consistently
+
+
+      LowPower.powerDown(SLEEP_60MS, ADC_OFF, BOD_OFF); 
+  }
   
 
