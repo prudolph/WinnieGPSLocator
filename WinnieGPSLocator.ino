@@ -11,17 +11,8 @@
 
 #include "Config.h"
 
-
-
 // Your GPRS credentials
-// Leave empty, if missing user or pass
 const char apn[]  = "hologram";
-const char user[] = "";
-const char pass[] = "";
-char http_cmd[] = "{\"k\": \"<CRED>\",\"d\": \"hello from tcp test\",\"t\": [\"location\"]}";
-
-const char server[] = "cloudsocket.hologram.io";
-const int port = 9999;
 
 bool needGPSFix = false; 
 
@@ -29,7 +20,7 @@ SoftwareSerial SerialAT(PIN_TX,PIN_RX ); // TX, RX
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 
-typedef struct{ String lat,lon; int spd;} Position;
+typedef struct{ float lat,lon;} Position;
 
 
 //signitures
@@ -37,7 +28,7 @@ void enableCellPower(bool state);
 void connectToModem();
 void connectToNetwork();
 void disconnectModem();
-void postData(String dataStr, String tagStr);
+void postData(String dataStr);
 void sendLocationData();
 void enableGPS(bool state);
 Position getGPSPosition();
@@ -58,9 +49,6 @@ void setup(){
   Serial.begin(115200);
   delay(10);
 
-  Serial.print(F("Using Credentials: "));
-  Serial.println(CSR_Cred);
-  
   enableCellPower(true);
   connectToModem();
   enableGPS(true);
@@ -79,15 +67,7 @@ void loop(){
       lastGPSPos=getGPSPosition();
       lastCELLPos=getCellPosition();
    }
-  Serial.println("LAST GPS Pos: ");
-  Serial.println(lastGPSPos.lat);
-  Serial.println(lastGPSPos.lon);
-  Serial.println(lastGPSPos.spd);
-  
-  Serial.println("LAST CELL Pos: ");
-  Serial.println(lastCELLPos.lat);
-  Serial.println(lastCELLPos.lon);
-  Serial.println(lastCELLPos.spd);
+
 
   sendLocationData();
 
@@ -95,10 +75,7 @@ void loop(){
 }
 
 
-void enableCellPower(bool state){
-  Serial.print(F("Attempting to Set Power State to: "));
-  Serial.println(state);
-       
+void enableCellPower(bool state){      
     int pwrState = digitalRead(PWR_PIN);
     if( pwrState!=state ){ 
         digitalWrite(KEY_PIN, LOW);
@@ -115,45 +92,35 @@ void connectToModem(){
 
   // Restart takes quite some time
   // To skip it, call init() instead of restart()
-  Serial.println(F("Initializing modem..."));
   modem.restart();
 
   String modemInfo = modem.getModemInfo();
-  Serial.print(F("Modem: "));
   Serial.println(modemInfo);
 }
 
 
 void connectToNetwork(){
- 
-  Serial.print(F("Connecting to network..."));
-  if (!modem.waitForNetwork()) {
-    Serial.println(F(" fail"));
+   if (!modem.waitForNetwork()) {
+    Serial.println(F(" fail to connect to network"));
     while (true);
   }
-  Serial.println(F(" OK"));
 
-  Serial.print(F("Connecting to "));
-  Serial.print(apn);
-  if (!modem.gprsConnect(apn, user, pass)) {
+
+  if (!modem.gprsConnect(apn, "", "")) {
     Serial.println(F(" fail"));
     while (true);
   }
-  Serial.println(F(" OK"));
 
   }
 
 void postData(String dataStr){
   
-  Serial.println(F("Connecting to "));
-  Serial.print(server);
-  if (!client.connect(server, port)) {
-    Serial.println(" fail");
+  if (!client.connect("cloudsocket.hologram.io", 9999)) {
+    Serial.println(" fail connect - hologram");
     delay(10000);
     return;
   }
   
-  Serial.println(" OK");
   // Make a TCP GET request
   client.print(dataStr);
   
@@ -166,16 +133,14 @@ void postData(String dataStr){
       timeout = millis();
     }
   }
-  Serial.println();
-  client.stop();
-  Serial.println(F("Server disconnected"));
-  
+
+  client.stop();  
   }
 
 void sendLocationData(){
     Serial.println(F("Sending Location Data"));
     
-    StaticJsonBuffer<300> jsonBuffer;
+    StaticJsonBuffer<150> jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
     root["k"]=CSR_Cred;
     
@@ -183,15 +148,15 @@ void sendLocationData(){
     tags.add("loc");
     
    
-    StaticJsonBuffer<100> dataBuffer;
+    StaticJsonBuffer<50> dataBuffer;
     JsonObject& dataRoot = dataBuffer.createObject(); 
      dataRoot["Glt"] =lastGPSPos.lat;
      dataRoot["Gln"] =lastGPSPos.lon;
-     dataRoot["Gs"] =lastGPSPos.spd;
+
 
      dataRoot["Clt"] =lastCELLPos.lat;
      dataRoot["Cln"] =lastCELLPos.lon;
-     dataRoot["Cs"] =lastCELLPos.spd;
+
 
      String payloadStr;
      dataRoot.printTo(payloadStr);
@@ -201,7 +166,7 @@ void sendLocationData(){
     root.prettyPrintTo(Serial);
     String dataString;
     root.printTo(dataString);
-    postData(dataString);
+    //postData(dataString);
   } 
 void disconnectModem(){
     SerialAT.end();
@@ -217,15 +182,13 @@ void disconnectModem(){
 
  
 Position getGPSPosition(){
-    Serial.println(F(" Getting GPS Position"));
-
     float lat,  lon, spd;
     int alt, viewd_sats,  used_sats;
       
     
       bool fix= modem.getGPS(&lat, &lon, &spd, &alt, &viewd_sats, &used_sats) ;
       if(!fix){
-        Serial.println(F("Could Not get Satelite FIX...Retry"));        
+        Serial.println(F("No Sat FIX...Retry"));        
       }else{
         enableGPS(false);
       }
@@ -233,20 +196,10 @@ Position getGPSPosition(){
      Position pos;
      pos.lat = lat;
      pos.lon = lon;
-     pos.spd = spd;
-     /*
-      Serial.println(lat);
-      Serial.println(lon);
-      Serial.println(spd);
-      Serial.println(alt);
-      Serial.println(viewd_sats);
-      Serial.println(used_sats);
-*/
     return pos;
   }
   
 Position getCellPosition(){
-  Serial.println(F(" Getting CELL Position"));
   String gsmLoc = modem.getGsmLocation();
   char gsmCharBuf[gsmLoc.length()+1];
   gsmLoc.toCharArray(gsmCharBuf,gsmLoc.length()+1);
@@ -260,8 +213,8 @@ Position getCellPosition(){
   }
   
      Position pos;
-     pos.lon = results[1];
-     pos.lat = results[2];
+     pos.lon = results[1].toFloat();
+     pos.lat = results[2].toFloat();
 
     return pos;
   }
