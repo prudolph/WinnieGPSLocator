@@ -10,7 +10,7 @@
 #define Y_PIN A1
 #define Z_PIN A2
 
-#define DEBUG true
+#define DEBUG false
 
 
 #include <TinyGsmClient.h>
@@ -29,9 +29,10 @@ bool lowPowerState=false;
 //Sends location data on first movement. 
 //Waits 5 minutes to check for more movement.
 //check for movement for 2
-unsigned long MessageSendIntervalTime = 1000*60*5;//Waits 5 minutes to check for more movement.
-unsigned long MovementCheckIntervalTime = 1000*60*1;//check for movement every 1 mintue
-unsigned long SleepIntervalTime = 1000*60*10;//Turn off celluar after 10 mins AFTER no movement
+
+unsigned long MessageSendIntervalTime = 120000;//Waits 5 minutes to check for more movement.
+ unsigned long MovementCheckIntervalTime = 60000;//check for movement every 1 mintue
+unsigned long SleepIntervalTime = 600000;//Turn off celluar after 10 mins AFTER no movement
 unsigned long MovementStartTime,MovementCheckTime, LastMessageSendTime;
 unsigned long TIMEOFFSET=0;
 
@@ -87,15 +88,23 @@ void setup(){
 
   lowPowerMode();
    Serial.println(F("SETUP COMPLETE"));
+      Serial.println(F("INTERVALS: "));
+Serial.print(F("MessageSendIntervalTime: "));
+Serial.println(MessageSendIntervalTime);
 
+Serial.print(F("MovementCheckIntervalTime: "));
+Serial.println(MovementCheckIntervalTime);
+
+Serial.print(F("SleepIntervalTime: "));
+Serial.println(SleepIntervalTime);
 }
 
 void loop(){
 
-
+  
     unsigned long elapsedTimeSinceLastMvmtCheck = (millis()+TIMEOFFSET) - MovementCheckTime;
-
-    
+         Serial.println(F("Time Since Last MVMT CHK"));
+    Serial.println(elapsedTimeSinceLastMvmtCheck);
     //Check for any movement if we havent checked recently
     if(elapsedTimeSinceLastMvmtCheck > MovementCheckIntervalTime){
       MovementCheckTime=millis();
@@ -103,62 +112,59 @@ void loop(){
      
       if(checkForMovement() ){
           Serial.println(F("-------Movement Detected"));
-         if(lowPowerState) wakeUp();
+          needPositionUpdate=true;
+         if(lowPowerState){ wakeUp();}
+
+         delay(10000);
+         updatePosition(true);
       }
  
     }
 
+ 
+    unsigned long elapsedTimeSinceLastMvmt = (millis()+TIMEOFFSET) - MovementStartTime;
+    if ((elapsedTimeSinceLastMvmt > SleepIntervalTime) && !lowPowerState){//IF we have gotten past the SleepIntervalTime , Power down celluar
+       Serial.println(F("No movment for a while - powerDown"));
+        updatePosition(false);
+       
+        lowPowerMode();
+     }
 
-  if(needPositionUpdate){
-             Serial.println(F("-------Getting Position Updates"));
+
+  delay(10000);
+
+
+}
+
+void updatePosition(bool force){
+      Serial.println(F("-------Getting Position Updates"));
       Position curGPSPos = getGPSPosition();
       Position curCELLPos = getCellPosition();
-     bool positionMoved =false;
+      bool positionMoved =false;
       //Check if anything changed
       if(curGPSPos.lat!=lastGPSPos.lat||
          curGPSPos.lon!=lastGPSPos.lon||
          curCELLPos.lat!=curCELLPos.lat||
          curCELLPos.lon!=curCELLPos.lon){
-          positionMoved =true;
-          //Update Positions
-             lastGPSPos=curGPSPos;
-             lastCELLPos=curCELLPos;
+         positionMoved =true;
+            Serial.print(F("-------POSITION MOVED"));
+         
         }
 
   
-      unsigned long timeSinceMessageSend = (millis()+TIMEOFFSET) - LastMessageSendTime;
-          Serial.println(F("Time Since Last MSG SND"));
-    Serial.println(timeSinceMessageSend);
-       if(timeSinceMessageSend >MessageSendIntervalTime){   
+     unsigned long timeSinceMessageSend = (millis()+TIMEOFFSET) - LastMessageSendTime;
+     Serial.print(F("Time Since Last MSG SND"));
+     Serial.println(timeSinceMessageSend);
+      // if((timeSinceMessageSend >MessageSendIntervalTime) && positionMoved ){   
+       if(force || positionMoved ){   
+            //Update Positions
+             lastGPSPos=curGPSPos;
+             lastCELLPos=curCELLPos;
           //Send Data
           sendLocationData();
         }
-  }
-
- 
-    unsigned long elapsedTimeSinceLastMvmt = (millis()+TIMEOFFSET) - MovementStartTime;  
-    if (elapsedTimeSinceLastMvmt > SleepIntervalTime && !lowPowerState){//IF we have gotten past the SleepIntervalTime , Power down celluar
-       Serial.println(F("No movment for a while - powerDown"));
-         lowPowerMode();
-     }
-
-
-  delay(10000);
-  /*
-  if(lowPowerState){
   
-     Serial.end();
-     TIMEOFFSET =(millis()+TIMEOFFSET);
-    LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);  
-    Serial.begin(115200);
-    
-  }else{
-    delay(10000);  
   }
-*/
-
-}
-
 
 void enableCellPower(bool state){      
     int pwrState = digitalRead(PWR_PIN);
@@ -316,7 +322,6 @@ void wakeUp(){
         modem.enableGPS();
       
         connectToNetwork();
-        needPositionUpdate=true;
       }
       
 
@@ -331,7 +336,7 @@ void lowPowerMode(){
     
         lowPowerState=true;
         Serial.println("Power Down");
-        needPositionUpdate=false;
+     
          modem.disableGPS();
          modem.gprsDisconnect();
          SerialAT.end();
