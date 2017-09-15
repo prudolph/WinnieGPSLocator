@@ -4,7 +4,13 @@
 #define PIN_RX 2
 #define KEY_PIN 8
 #define PWR_PIN 7
-#define WAKE_PIN A0
+#define WAKE_PIN A5
+
+#define X_PIN A0
+#define Y_PIN A1
+#define Z_PIN A2
+
+
 
 #include <TinyGsmClient.h>
 #include <SoftwareSerial.h>
@@ -17,8 +23,13 @@
 const char apn[]  = "hologram";
 
 bool needGPSFix = false; 
-unsigned long IntervalTime = 40000;
-unsigned long StartTime;
+bool lowPowerState=false;
+unsigned long IntervalTime = 60000;
+unsigned long MovementStartTime;
+
+//Movement
+int xVal,yVal,zVal=0;
+int mvmtThreshhold=25;
 
 SoftwareSerial SerialAT(PIN_TX,PIN_RX ); // TX, RX
 TinyGsm modem(SerialAT);
@@ -41,6 +52,7 @@ Position getCellPosition();
 void wakeUp();
 void lowPowerMode();
 
+bool movementDetected();
 Position lastGPSPos,lastCELLPos;
 
 void setup(){
@@ -49,17 +61,31 @@ void setup(){
       pinMode(KEY_PIN, OUTPUT);  
       pinMode(PWR_PIN, INPUT);  
       pinMode(WAKE_PIN, INPUT);  
+      pinMode(X_PIN, INPUT);  
+      pinMode(Y_PIN, INPUT);  
+      pinMode(Z_PIN, INPUT);  
+      
       digitalWrite(KEY_PIN, HIGH);
 
+      xVal = analogRead(X_PIN);
+      yVal = analogRead(Y_PIN);
+      zVal = analogRead(Z_PIN);
       
   // Set console baud rate
   Serial.begin(115200);
-  delay(10);
+  delay(5000);
   wakeUp();
-  
 }
 
 void loop(){
+
+  bool hasMovement = movementDetected();
+  if(hasMovement && lowPowerState){
+    MovementStartTime=millis();
+    wakeUp();
+    Serial.println("Movement Detected");
+  }
+
 
   
   if(needGPSFix){
@@ -70,21 +96,27 @@ void loop(){
    }
 
     unsigned long CurrentTime = millis();
-    unsigned long ElapsedTime = CurrentTime - StartTime;
+    unsigned long ElapsedTime = CurrentTime - MovementStartTime;
+     
+     //Give the movement detecton to a chance to reset without shutting down
+   if(ElapsedTime>IntervalTime-10000){
+        lowPowerState=false;
+    }
+
      if(ElapsedTime>IntervalTime){
       lowPowerMode();
     }
-     Serial.println(ElapsedTime);
- 
+     if(lowPowerMode) delay(1000*60*5);
+     else             delay(1000*60); 
 }
 
 
 void enableCellPower(bool state){      
     int pwrState = digitalRead(PWR_PIN);
-    if( pwrState!=state ){ 
-         Serial.print("Setting Power:");
+      Serial.print("Setting Power:");
          Serial.println(state);
- 
+    if( pwrState!=state ){ 
+         
         digitalWrite(KEY_PIN, LOW);
         delay(2000);
         digitalWrite(KEY_PIN, HIGH);
@@ -173,17 +205,9 @@ void sendLocationData(){
     root.prettyPrintTo(Serial);
     String dataString;
     root.printTo(dataString);
-    //postData(dataString);
+    postData(dataString);
   } 
 
-
-/*
- void enableGPS(bool state){
-  needGPSFix=state;
-  if(state)modem.enableGPS();
-  else modem.disableGPS();
- }
- */
 
 
 Position getGPSPosition(){
@@ -224,27 +248,54 @@ Position getCellPosition(){
 
 void wakeUp(){   
     Serial.println("Wakeup");
-   
-    StartTime = millis();
-   
+    lowPowerState=false;
+    
     enableCellPower(true);
     connectToModem();
+    modem.enableGPS();
+    
     connectToNetwork();
+    needGPSFix=true;
+
+    
  }
 
 void lowPowerMode(){
+  lowPowerState=true;
     Serial.println("Power Down");
      modem.disableGPS();
      modem.gprsDisconnect();
      SerialAT.end();
      enableCellPower(false);
-     
-    delay(5000);
-    // Triggers an infinite sleep (the device will be woken up only by the registered wakeup sources)
-    // The power consumption of the chip will drop consistently
-
-
-      LowPower.powerDown(SLEEP_60MS, ADC_OFF, BOD_OFF); 
   }
+
+  bool movementDetected(){
+      bool movement = false;
+
+        int xCurVal,yCurVal,zCurVal=0;
+      for(int i=0;i<10;i++){
+         xCurVal = analogRead(X_PIN);
+         yCurVal = analogRead(Y_PIN);
+         zCurVal = analogRead(Z_PIN);
+
+        int xDiff=  abs(xCurVal-xVal);
+        int yDiff=  abs(yCurVal-yVal);
+        int zDiff=  abs(zCurVal-zVal);
+        if (xDiff>mvmtThreshhold ||
+            yDiff>mvmtThreshhold||
+            zDiff>mvmtThreshhold){
+             
+             movement=true;  
+             break;
+        }
   
+        delay(100);
+      }
+
+      //Update Values
+         xVal = xCurVal;    
+         yVal = yCurVal;    
+        zVal = zCurVal; 
+         return movement;
+   }
 
