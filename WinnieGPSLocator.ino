@@ -10,6 +10,7 @@
 #define Y_PIN A1
 #define Z_PIN A2
 
+#define DEBUG true
 
 
 #include <TinyGsmClient.h>
@@ -22,17 +23,17 @@
 // Your GPRS credentials
 const char apn[]  = "hologram";
 
-bool needGPSFix = false; 
+bool needPositionUpdate = false; 
 bool lowPowerState=false;
 
 //Sends location data on first movement. 
 //Waits 5 minutes to check for more movement.
 //check for movement for 2
 unsigned long MessageSendIntervalTime = 1000*60*5;//Waits 5 minutes to check for more movement.
-unsigned long MovementCheckIntervalTime = 1000*60*1;//check for movement for 1 mintue
-                                                    //Sleep afte
-unsigned long MovementStartTime;
-
+unsigned long MovementCheckIntervalTime = 1000*60*1;//check for movement every 1 mintue
+unsigned long SleepIntervalTime = 1000*60*10;//Turn off celluar after 10 mins AFTER no movement
+unsigned long MovementStartTime,MovementCheckTime, LastMessageSendTime;
+unsigned long TIMEOFFSET=0;
 
 //Movement
 int xVal,yVal,zVal=0;
@@ -43,7 +44,6 @@ TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 
 typedef struct{ float lat,lon;} Position;
-
 
 //signitures
 void enableCellPower(bool state);
@@ -59,7 +59,7 @@ Position getCellPosition();
 void wakeUp();
 void lowPowerMode();
 
-bool movementDetected();
+bool checkForMovement();
 Position lastGPSPos,lastCELLPos;
 
 void setup(){
@@ -73,55 +73,90 @@ void setup(){
       pinMode(Z_PIN, INPUT);  
       
       digitalWrite(KEY_PIN, HIGH);
-
+  lowPowerState = !digitalRead(PWR_PIN);
+  
       xVal = analogRead(X_PIN);
       yVal = analogRead(Y_PIN);
       zVal = analogRead(Z_PIN);
       
   // Set console baud rate
   Serial.begin(115200);
-  delay(5000);
-  wakeUp();
+
+  //If Just turned on let the device settle for a few seconds
+  delay(1000);
+
+  lowPowerMode();
+   Serial.println(F("SETUP COMPLETE"));
+
 }
 
 void loop(){
 
 
+    unsigned long elapsedTimeSinceLastMvmtCheck = (millis()+TIMEOFFSET) - MovementCheckTime;
+
+    
+    //Check for any movement if we havent checked recently
+    if(elapsedTimeSinceLastMvmtCheck > MovementCheckIntervalTime){
+      MovementCheckTime=millis();
+         Serial.println(F("Checking for movement"));
+     
+      if(checkForMovement() ){
+          Serial.println(F("-------Movement Detected"));
+         if(lowPowerState) wakeUp();
+      }
+ 
+    }
 
 
+  if(needPositionUpdate){
+             Serial.println(F("-------Getting Position Updates"));
+      Position curGPSPos = getGPSPosition();
+      Position curCELLPos = getCellPosition();
+     bool positionMoved =false;
+      //Check if anything changed
+      if(curGPSPos.lat!=lastGPSPos.lat||
+         curGPSPos.lon!=lastGPSPos.lon||
+         curCELLPos.lat!=curCELLPos.lat||
+         curCELLPos.lon!=curCELLPos.lon){
+          positionMoved =true;
+          //Update Positions
+             lastGPSPos=curGPSPos;
+             lastCELLPos=curCELLPos;
+        }
 
-
-
-  bool hasMovement = movementDetected();
   
-  if(hasMovement && lowPowerState){
-    wakeUp();
-    Serial.println("Movement Detected");
+      unsigned long timeSinceMessageSend = (millis()+TIMEOFFSET) - LastMessageSendTime;
+          Serial.println(F("Time Since Last MSG SND"));
+    Serial.println(timeSinceMessageSend);
+       if(timeSinceMessageSend >MessageSendIntervalTime){   
+          //Send Data
+          sendLocationData();
+        }
   }
 
+ 
+    unsigned long elapsedTimeSinceLastMvmt = (millis()+TIMEOFFSET) - MovementStartTime;  
+    if (elapsedTimeSinceLastMvmt > SleepIntervalTime && !lowPowerState){//IF we have gotten past the SleepIntervalTime , Power down celluar
+       Serial.println(F("No movment for a while - powerDown"));
+         lowPowerMode();
+     }
 
+
+  delay(10000);
+  /*
+  if(lowPowerState){
   
-  if(needGPSFix){
-      lastGPSPos=getGPSPosition();
-      lastCELLPos=getCellPosition();
-      sendLocationData();
+     Serial.end();
+     TIMEOFFSET =(millis()+TIMEOFFSET);
+    LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);  
+    Serial.begin(115200);
+    
+  }else{
+    delay(10000);  
+  }
+*/
 
-   }
-
-    unsigned long CurrentTime = millis();
-    unsigned long ElapsedTimeSinceLastMvmt = CurrentTime - MovementStartTime;
- /*    
-     //Give the movement detecton to a chance to reset without shutting down
-   if(ElapsedTime>IntervalTime-10000){
-        lowPowerState=false;
-    }
-/
-     if(ElapsedTime>IntervalTime){
-      lowPowerMode();
-    }
-     if(lowPowerMode) delay(1000*60*5);
-     else             delay(1000*60); 
-     */
 }
 
 
@@ -139,6 +174,7 @@ void enableCellPower(bool state){
 }
 
 void connectToModem(){
+      Serial.println(F("-------Cnt MDM"));
  // Set GSM module baud rate
   SerialAT.begin(9600);
   delay(3000);
@@ -153,6 +189,7 @@ void connectToModem(){
 
 
 void connectToNetwork(){
+      Serial.println(F("-------Cnt NTWRK"));
    if (!modem.waitForNetwork()) {
     Serial.println(F(" fail to connect to network"));
     while (true);
@@ -167,6 +204,13 @@ void connectToNetwork(){
   }
 
 void postData(String dataStr){
+    LastMessageSendTime=(millis()+TIMEOFFSET);
+    Serial.println("--------------------------");
+    Serial.println("POSTING LOCATION DATA");
+    Serial.println("--------------------------");
+  //Disable Posting
+  if(DEBUG)return;
+
   
   if (!client.connect("cloudsocket.hologram.io", 9999)) {
     Serial.println(" fail connect - hologram");
@@ -176,6 +220,8 @@ void postData(String dataStr){
   
   // Make a TCP GET request
   client.print(dataStr);
+  
+
   
   unsigned long timeout = millis();
   while (client.connected() && millis() - timeout < 10000L) {
@@ -262,32 +308,42 @@ Position getCellPosition(){
 
 void wakeUp(){   
     Serial.println("Wakeup");
-    lowPowerState=false;
-    
-    enableCellPower(true);
-    connectToModem();
-    modem.enableGPS();
-    
-    connectToNetwork();
-    needGPSFix=true;
+    int pwrState = digitalRead(PWR_PIN);
+      if( pwrState ==0){
+        lowPowerState=false; 
+        enableCellPower(true);
+        connectToModem();
+        modem.enableGPS();
+      
+        connectToNetwork();
+        needPositionUpdate=true;
+      }
+      
 
-    
+  
+
+   
  }
 
 void lowPowerMode(){
-  lowPowerState=true;
-    Serial.println("Power Down");
-     modem.disableGPS();
-     modem.gprsDisconnect();
-     SerialAT.end();
-     enableCellPower(false);
+    int pwrState = digitalRead(PWR_PIN);
+      if( pwrState ==1){
+    
+        lowPowerState=true;
+        Serial.println("Power Down");
+        needPositionUpdate=false;
+         modem.disableGPS();
+         modem.gprsDisconnect();
+         SerialAT.end();
+         enableCellPower(false);
+      }
   }
 
-  bool movementDetected(){
+  bool checkForMovement(){
       bool movement = false;
 
         int xCurVal,yCurVal,zCurVal=0;
-      for(int i=0;i<10;i++){
+      for(int i=0;i<100;i++){
          xCurVal = analogRead(X_PIN);
          yCurVal = analogRead(Y_PIN);
          zCurVal = analogRead(Z_PIN);
@@ -304,7 +360,7 @@ void lowPowerMode(){
              break;
         }
   
-        delay(100);
+        delay(10);
       }
 
       //Update Values
