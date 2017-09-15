@@ -24,8 +24,15 @@ const char apn[]  = "hologram";
 
 bool needGPSFix = false; 
 bool lowPowerState=false;
-unsigned long IntervalTime = 60000;
+
+//Sends location data on first movement. 
+//Waits 5 minutes to check for more movement.
+//check for movement for 2
+unsigned long MessageSendIntervalTime = 1000*60*5;//Waits 5 minutes to check for more movement.
+unsigned long MovementCheckIntervalTime = 1000*60*1;//check for movement for 1 mintue
+                                                    //Sleep afte
 unsigned long MovementStartTime;
+
 
 //Movement
 int xVal,yVal,zVal=0;
@@ -79,9 +86,15 @@ void setup(){
 
 void loop(){
 
+
+
+
+
+
+
   bool hasMovement = movementDetected();
+  
   if(hasMovement && lowPowerState){
-    MovementStartTime=millis();
     wakeUp();
     Serial.println("Movement Detected");
   }
@@ -96,18 +109,19 @@ void loop(){
    }
 
     unsigned long CurrentTime = millis();
-    unsigned long ElapsedTime = CurrentTime - MovementStartTime;
-     
+    unsigned long ElapsedTimeSinceLastMvmt = CurrentTime - MovementStartTime;
+ /*    
      //Give the movement detecton to a chance to reset without shutting down
    if(ElapsedTime>IntervalTime-10000){
         lowPowerState=false;
     }
-
+/
      if(ElapsedTime>IntervalTime){
       lowPowerMode();
     }
      if(lowPowerMode) delay(1000*60*5);
      else             delay(1000*60); 
+     */
 }
 
 
@@ -286,6 +300,7 @@ void lowPowerMode(){
             zDiff>mvmtThreshhold){
              
              movement=true;  
+             MovementStartTime=millis();
              break;
         }
   
