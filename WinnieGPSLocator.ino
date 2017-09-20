@@ -110,11 +110,9 @@ void loop(){
       enableCellPower(true);
       connectToModem();
       modem.enableGPS();
-      modem.maintain();
       connectToNetwork();
-      modem.maintain();
       updatePosition();
-      modem.maintain();
+      
       sendLocationData(MovementActive);
       delay(3000);
 
@@ -142,9 +140,8 @@ void loop(){
       connectToModem();
       modem.enableGPS();
       connectToNetwork();
-      modem.maintain();
       updatePosition();
-      modem.maintain();
+
       sendLocationData(MovementActive);
         delay(3000);
 
@@ -203,19 +200,12 @@ void updatePosition(){
 void enableCellPower(bool state){    
     //HIGH==ON  
      PowerState = digitalRead(PWR_PIN);
-     #if DEBUG
-       Serial.print("Setting Power:");
-       Serial.println(state);
-        Serial.print("PWR STATE:");
-       Serial.println(PowerState);
-       #endif
+ 
        
     while( PowerState!=state ){ 
        #if DEBUG
        Serial.print("Setting Power:");
        Serial.println(state);
-        Serial.print("PWR STATE:");
-       Serial.println(PowerState);
        #endif
         digitalWrite(KEY_PIN, LOW);
         delay(2000);
@@ -256,20 +246,24 @@ bool connectToNetwork(){
       #if DEBUG
       Serial.println(F(" fail to connect to networ... retrying"));
       #endif
-      retryCnt++;
-    delay(2000);
-    
-  }
-
+      
     int csq = modem.getSignalQuality();
        #if DEBUG 
        Serial.print(F("Signal Quality"));
         Serial.println(csq);
        #endif 
+       retryCnt++;
+    delay(2000);
+    
+  }
+
+ Serial.print(F("RETRYCNT "));
+  Serial.print(retryCnt);
   if(retryCnt==RetryLimit){
     return false;
   }
 
+  
   retryCnt=0;
   
    while(!modem.gprsConnect(apn, "", "") && retryCnt<RetryLimit) {
@@ -305,17 +299,12 @@ void postData(String dataStr){
   //Disable Posting
   //if(DEBUG)return;
 
-
-  int retryCnt=0;
-  while (!client.connect("cloudsocket.hologram.io", 9999)) {
+  
+  if (!client.connect("cloudsocket.hologram.io", 9999)) {
       #if DEBUG 
       Serial.println(" fail connect - hologram");
       #endif
     delay(5000);
-     retryCnt++;
-  }
-
-   if(retryCnt==RetryLimit){
     return;
   }
   
@@ -337,7 +326,6 @@ void postData(String dataStr){
   }
 
   client.stop();  
-  
   }
 
 void sendLocationData(bool mvmtStart){
@@ -451,7 +439,7 @@ Position getCellPosition(){
 
 void sleepMode(){
 
-      #if DEBUG
+         #if DEBUG
          Serial.println("Power Down");
          #endif
      
@@ -459,7 +447,6 @@ void sleepMode(){
          modem.gprsDisconnect();
           SerialAT.end();
          enableCellPower(false);
-         
   }
 
   bool checkForMovement(){
