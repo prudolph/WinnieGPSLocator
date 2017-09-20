@@ -11,7 +11,7 @@
 #define Y_PIN A1
 #define Z_PIN A2
 
-#define DEBUG false 
+#define DEBUG true 
 
 
 #include <TinyGsmClient.h>
@@ -26,27 +26,25 @@ const char apn[]  = "hologram";
 
 int RetryLimit=3;
 //bool needPositionUpdate = false; 
-bool lowPowerState=false;
-bool movementTriggered=false;
+bool PowerState=false;
+bool MovementActive=false;
 
 //Sends location data on first movement. 
 //Waits 5 minutes to check for more movement.
-//check for movement for 2
 
-//unsigned long MovementCheckIntervalTime = 60000;//check for movement every 1 mintue
-unsigned long SleepIntervalTime = 600000;//Turn off celluar after 10 mins AFTER no movement
-unsigned long MovementStartTime,MovementCheckTime, LastMessageSendTime;
+unsigned long MovementEndThreshold = 600000;//Send Message after 5 mins no movement
+unsigned long MovementStartTime, LastMessageSendTime;
 unsigned long TIMEOFFSET=0;
 
 //Movement
 int xVal,yVal,zVal=0;
-int mvmtThreshhold=0;
+int mvmtThreshhold=10;
 
 SoftwareSerial SerialAT(PIN_TX,PIN_RX ); // TX, RX
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 
-typedef struct{ float lat,lon;} Position;
+typedef struct{ String lat,lon;} Position;
 
 //signitures
 void enableCellPower(bool state);
@@ -54,12 +52,10 @@ void connectToModem();
 bool connectToNetwork();
 void disconnectModem();
 void postData(String dataStr);
-void sendLocationData();
+void sendLocationData(bool mvmtStart);
 
 Position getGPSPosition();
 Position getCellPosition();
-
-bool wakeUp();
 void sleepMode();
 
 bool checkForMovement();
@@ -70,13 +66,15 @@ void setup(){
     //Set Pin Modes
       pinMode(KEY_PIN, OUTPUT);  
       pinMode(PWR_PIN, INPUT);  
-     pinMode(MAIN_BATT_PIN, INPUT);  
+      pinMode(MAIN_BATT_PIN, INPUT);  
       pinMode(X_PIN, INPUT);  
       pinMode(Y_PIN, INPUT);  
       pinMode(Z_PIN, INPUT);  
       
       digitalWrite(KEY_PIN, HIGH);
-  lowPowerState = !digitalRead(PWR_PIN);
+      
+      //HIGH== ON
+      PowerState = digitalRead(PWR_PIN);
   
       xVal = analogRead(X_PIN);
       yVal = analogRead(Y_PIN);
@@ -85,69 +83,69 @@ void setup(){
   // Set console baud rate
   #if DEBUG 
   Serial.begin(115200);
- #endif
+  #endif
  
   //If Just turned on let the device settle for a few seconds
   delay(1000);
 
   sleepMode();
   
-  #if DEBUG
-    Serial.println(F("SETUP COMPLETE"));
-    Serial.println(F("INTERVALS: "));
-    
-    Serial.print(F("SleepIntervalTime: "));
-    Serial.println(SleepIntervalTime);
-   #endif
+
 }
 
 void loop(){
+  
+  #if DEBUG
+  Serial.println(F("Checking for movement"));
+  #endif
 
-
-      MovementCheckTime=millis();
-        #if DEBUG
-        Serial.println(F("Checking for movement"));
-        #endif
-      if(checkForMovement() ){
-        
-            #if DEBUG
-            Serial.println(F("-------Movement Detected"));
-            #endif
-
-          if(movementTriggered ==false){
-            bool cellIsAwake=false;
-            if(lowPowerState){ cellIsAwake = wakeUp();}
-            if(cellIsAwake){
-              delay(10000);
-              updatePosition(true);
-            }
-            if(!lowPowerState)sleepMode();
-             movementTriggered=true;
-          
-          }
-          
-          
-      }
+  if(checkForMovement() ){  
+    #if DEBUG
+    Serial.println(F("-------Movement Detected"));
+    #endif
+    
+    if(MovementActive ==false){
       
-    unsigned long elapsedTimeSinceLastMvmt = (millis()+TIMEOFFSET) - MovementStartTime;
+      MovementActive=true;
+      enableCellPower(true);
+      connectToModem();
+      modem.enableGPS();
+      connectToNetwork();
+      updatePosition();
+      
+      sendLocationData(MovementActive);
+      delay(3000);
+
+      sleepMode();
+
+    
+    }
+  }
+    
+  unsigned long elapsedTimeSinceLastMvmt = (millis()+TIMEOFFSET) - MovementStartTime;
         
-          #if DEBUG 
-          Serial.print(F("elapsedTimeSinceLastMvmt"));
-          Serial.println(elapsedTimeSinceLastMvmt);
-          #endif
-    if ((elapsedTimeSinceLastMvmt > SleepIntervalTime) && movementTriggered){
-        movementTriggered=false;
-           #if DEBUG
-           Serial.println(F("-------Movement STOPPED"));
-           #endif
-            bool cellIsAwake=false;
-         if(lowPowerState){cellIsAwake= wakeUp();}
-         if(cellIsAwake){
-          delay(10000);
-          updatePosition(true);
-         }
-          if(!lowPowerState)sleepMode();
-          
+  #if DEBUG 
+  Serial.print(F("elapsedTimeSinceLastMvmt"));
+  Serial.println(elapsedTimeSinceLastMvmt);
+  #endif
+
+  if ((elapsedTimeSinceLastMvmt > MovementEndThreshold) && MovementActive){
+       MovementActive=false;
+       #if DEBUG
+       Serial.println(F("-------Movement STOPPED"));
+       #endif
+       
+      MovementActive=false;
+      enableCellPower(true);
+      connectToModem();
+      modem.enableGPS();
+      connectToNetwork();
+      updatePosition();
+
+      sendLocationData(MovementActive);
+        delay(3000);
+
+      sleepMode(); 
      }
 
 
@@ -155,10 +153,11 @@ void loop(){
   Serial.println(F("Deep Sleep"));
   Serial.end();
   #endif
+  
   //update time to account for deep sleep
   TIMEOFFSET =(millis()+TIMEOFFSET)+(64000);
   
-  //Sleep for 32
+  //deep Sleep for
   for(int i=0;i<8;i++){
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
   }
@@ -168,13 +167,14 @@ void loop(){
   #endif
 }
 
-void updatePosition(bool force){
+void updatePosition(){
     #if DEBUG
     Serial.println(F("-------Getting Position Updates"));
     #endif
-    
+    /*
       Position curGPSPos = getGPSPosition();
       Position curCELLPos = getCellPosition();
+      
       bool positionMoved =false;
       //Check if anything changed
       if(curGPSPos.lat!=lastGPSPos.lat||
@@ -186,48 +186,43 @@ void updatePosition(bool force){
               Serial.print(F("-------POSITION MOVED"));
               #endif
         }
-
+      */
   
-     unsigned long timeSinceMessageSend = (millis()+TIMEOFFSET) - LastMessageSendTime;
-       #if DEBUG 
-       Serial.print(F("Time Since Last MSG SND"));
-       Serial.println(timeSinceMessageSend);
-       #endif
-       //if(force || positionMoved ){   
-       if(force  ){   
-            //Update Positions
-             lastGPSPos=curGPSPos;
-             lastCELLPos=curCELLPos;
-          //Send Data
-          sendLocationData();
-        }
+   
+
+      //Update Positions
+      lastGPSPos=getGPSPosition();
+      lastCELLPos=getCellPosition();
+
   
   }
 
-void enableCellPower(bool state){      
-    int pwrState = digitalRead(PWR_PIN);
-      #if DEBUG
+void enableCellPower(bool state){    
+    //HIGH==ON  
+     PowerState = digitalRead(PWR_PIN);
+ 
+       
+    while( PowerState!=state ){ 
+       #if DEBUG
        Serial.print("Setting Power:");
        Serial.println(state);
        #endif
-       
-    if( pwrState!=state ){ 
-         
         digitalWrite(KEY_PIN, LOW);
         delay(2000);
         digitalWrite(KEY_PIN, HIGH);
         delay(5000);
+        //HIGH==On
+       PowerState = digitalRead(PWR_PIN);
     }
 }
 
 void connectToModem(){
-       #if DEBUG
-       Serial.println(F("-------Cnt MDM"));
-       #endif
-  delay(4000);
+   #if DEBUG
+   Serial.println(F("-------Cnt MDM"));
+   #endif
  // Set GSM module baud rate
    SerialAT.begin(9600);
-  delay(4000);
+   delay(4000);
 
   // Restart takes quite some time
   // To skip it, call init() instead of restart()
@@ -288,6 +283,13 @@ bool connectToNetwork(){
   }
 
 void postData(String dataStr){
+/*
+    unsigned long timeSinceMessageSend = (millis()+TIMEOFFSET) - LastMessageSendTime;
+     #if DEBUG 
+     Serial.print(F("Time Since Last MSG SND"));
+     Serial.println(timeSinceMessageSend);
+     #endif
+*/
     LastMessageSendTime=(millis()+TIMEOFFSET);
       #if DEBUG
       Serial.println("--------------------------");
@@ -326,10 +328,10 @@ void postData(String dataStr){
   client.stop();  
   }
 
-void sendLocationData(){
+void sendLocationData(bool mvmtStart){
     if(DEBUG) Serial.println(F("Sending Location Data"));
     
-    StaticJsonBuffer<150> jsonBuffer;
+    StaticJsonBuffer<200> jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
     root["k"]=CSR_Cred;
     
@@ -337,7 +339,7 @@ void sendLocationData(){
     tags.add("loc");
     
    
-    StaticJsonBuffer<75> dataBuffer;
+    StaticJsonBuffer<150> dataBuffer;
     JsonObject& dataRoot = dataBuffer.createObject(); 
      dataRoot["Glt"] =lastGPSPos.lat;
      dataRoot["Gln"] =lastGPSPos.lon;
@@ -348,6 +350,8 @@ void sendLocationData(){
      
      dataRoot["cb"] =modem.getBattPercent();
      dataRoot["mb"]= digitalRead(MAIN_BATT_PIN);
+     dataRoot["mvSt"]= mvmtStart;
+     
      String payloadStr;
      dataRoot.printTo(payloadStr);
 
@@ -367,16 +371,38 @@ void sendLocationData(){
 Position getGPSPosition(){
     float lat,  lon, spd;
     int alt, viewd_sats,  used_sats;
+      /*
       
-    
+      retryCnt=0;
+  
+   while(!modem.gprsConnect(apn, "", "") && retryCnt<RetryLimit) {
+      #if DEBUG
+      Serial.println(F(" APN CONN FAIL "));
+      #endif
+    retryCnt++;
+    delay(2000);
+  }
+      */
+
+      int retryCnt=0;
       bool fix= modem.getGPS(&lat, &lon, &spd, &alt, &viewd_sats, &used_sats) ;
-      if(!fix){
+      while (!fix && retryCnt<RetryLimit){
          #if DEBUG
          Serial.println(F("No Sat FIX...Retry"));        
          #endif
+         retryCnt++;
+         delay(10000);
       }
   
      Position pos;
+
+/*
+     char latChstr[15];
+     char lonChstr[15];
+     
+      dtostrf(lat,12, 6, latChstr);
+      dtostrf(lon,12, 6, lonChstr);
+  */  
      pos.lat = lat;
      pos.lon = lon;
     return pos;
@@ -384,6 +410,10 @@ Position getGPSPosition(){
   
 Position getCellPosition(){
   String gsmLoc = modem.getGsmLocation();
+    #if DEBUG
+    Serial.println(F("GSM LOC "));
+    Serial.println(gsmLoc);
+    #endif
   char gsmCharBuf[gsmLoc.length()+1];
   gsmLoc.toCharArray(gsmCharBuf,gsmLoc.length()+1);
   String results[5];
@@ -396,38 +426,19 @@ Position getCellPosition(){
   }
   
      Position pos;
-     pos.lon = results[1].toFloat();
-     pos.lat = results[2].toFloat();
+     pos.lat = results[2];
+     pos.lon = results[1];
 
+    #if DEBUG
+    Serial.println(F("CELL Lat lon "));
+    Serial.println( pos.lat);
+        Serial.println( pos.lon);
+    #endif
     return pos;
   }
 
-bool wakeUp(){   
-    #if DEBUG
-    Serial.println("Wakeup");
-    #endif
-    
-    int pwrState = digitalRead(PWR_PIN);
-      if( pwrState ==0){
-        lowPowerState=false; 
-        enableCellPower(true);
-        connectToModem();
-        modem.enableGPS();
-      
-        return connectToNetwork();
-      }
-      
-
-  
-
-   
- }
-
 void sleepMode(){
-    int pwrState = digitalRead(PWR_PIN);
-      if( pwrState ==1){
-    
-        lowPowerState=true;
+
          #if DEBUG
          Serial.println("Power Down");
          #endif
@@ -436,13 +447,12 @@ void sleepMode(){
          modem.gprsDisconnect();
           SerialAT.end();
          enableCellPower(false);
-      }
   }
 
   bool checkForMovement(){
       bool movement = false;
-
-        int xCurVal,yCurVal,zCurVal=0;
+      int xCurVal,yCurVal,zCurVal=0;
+      
       for(int i=0;i<100;i++){
          xCurVal = analogRead(X_PIN);
          yCurVal = analogRead(Y_PIN);
@@ -451,6 +461,16 @@ void sleepMode(){
         int xDiff=  abs(xCurVal-xVal);
         int yDiff=  abs(yCurVal-yVal);
         int zDiff=  abs(zCurVal-zVal);
+
+         #if DEBUG
+          Serial.println("Movement Values Diff");
+          Serial.print("X: ");
+          Serial.println(xDiff);
+          Serial.print("Y: ");
+          Serial.println(yDiff);
+          Serial.print("Z: ");
+          Serial.println(zDiff);
+        #endif
         if (xDiff>mvmtThreshhold ||
             yDiff>mvmtThreshhold||
             zDiff>mvmtThreshhold){
