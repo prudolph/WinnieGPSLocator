@@ -11,7 +11,7 @@
 #define Y_PIN A1
 #define Z_PIN A2
 
-#define DEBUG true 
+#define DEBUG false 
 
 
 #include <TinyGsmClient.h>
@@ -40,7 +40,7 @@ unsigned long TIMEOFFSET=0;
 
 //Movement
 int xVal,yVal,zVal=0;
-int mvmtThreshhold=45;
+int mvmtThreshhold=0;
 
 SoftwareSerial SerialAT(PIN_TX,PIN_RX ); // TX, RX
 TinyGsm modem(SerialAT);
@@ -144,7 +144,7 @@ void loop(){
          if(lowPowerState){cellIsAwake= wakeUp();}
          if(cellIsAwake){
           delay(10000);
-          updatePosition(false);
+          updatePosition(true);
          }
           if(!lowPowerState)sleepMode();
           
@@ -193,7 +193,8 @@ void updatePosition(bool force){
        Serial.print(F("Time Since Last MSG SND"));
        Serial.println(timeSinceMessageSend);
        #endif
-       if(force || positionMoved ){   
+       //if(force || positionMoved ){   
+       if(force  ){   
             //Update Positions
              lastGPSPos=curGPSPos;
              lastCELLPos=curCELLPos;
