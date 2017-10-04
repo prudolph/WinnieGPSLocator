@@ -11,7 +11,7 @@
 #define Y_PIN A1
 #define Z_PIN A2
 
-#define DEBUG true 
+#define DEBUG false 
 
 
 #include <TinyGsmClient.h>
@@ -289,7 +289,8 @@ void sendLocationData(bool mvmtStart){
 
 Position getGPSPosition(){
     float lat,  lon=0;
-
+    delay(15000);
+         
       short retryCnt=0;
       bool fix= modem.getGPS(&lat, &lon) ;
       while (!fix && retryCnt<RetryLimit){
@@ -299,8 +300,10 @@ Position getGPSPosition(){
          retryCnt++;
          delay(2000);
          modem.maintain();
+         fix= modem.getGPS(&lat, &lon);
       }
-  
+
+
      Position pos;
 
      pos.lat = lat;
