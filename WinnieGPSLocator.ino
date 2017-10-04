@@ -11,7 +11,7 @@
 #define Y_PIN A1
 #define Z_PIN A2
 
-#define DEBUG true 
+#define DEBUG false 
 
 
 #include <TinyGsmClient.h>
@@ -24,7 +24,7 @@
 // Your GPRS credentials
 const char apn[]  = "hologram";
 
-int RetryLimit=3;
+short RetryLimit=3;
 //bool needPositionUpdate = false; 
 bool PowerState=false;
 bool MovementActive=false;
@@ -33,12 +33,12 @@ bool MovementActive=false;
 //Waits 5 minutes to check for more movement.
 
 unsigned long MovementEndThreshold = 600000;//Send Message after 5 mins no movement
-unsigned long MovementStartTime, LastMessageSendTime;
+unsigned long MovementStartTime;
 unsigned long TIMEOFFSET=0;
 
 //Movement
-int xVal,yVal,zVal=0;
-int mvmtThreshhold=10;
+short xVal,yVal,zVal=0;
+short mvmtThreshhold=10;
 
 SoftwareSerial SerialAT(PIN_TX,PIN_RX ); // TX, RX
 TinyGsm modem(SerialAT);
@@ -55,11 +55,11 @@ void postData(String dataStr);
 void sendLocationData(bool mvmtStart);
 
 Position getGPSPosition();
-Position getCellPosition();
+//Position getCellPosition();
 void sleepMode();
 
 bool checkForMovement();
-Position lastGPSPos,lastCELLPos;
+Position lastGPSPos;
 
 void setup(){
 
@@ -86,7 +86,7 @@ void setup(){
   #endif
  
   //If Just turned on let the device settle for a few seconds
-  delay(1000);
+  delay(500);
 
   sleepMode();
   
@@ -100,9 +100,6 @@ void loop(){
   #endif
 
   if(checkForMovement() ){  
-    #if DEBUG
-    Serial.println(F("-------Movement Detected"));
-    #endif
     
     if(MovementActive ==false){
       
@@ -114,7 +111,6 @@ void loop(){
       updatePosition();
       
       sendLocationData(MovementActive);
-      delay(3000);
 
       sleepMode();
 
@@ -124,10 +120,6 @@ void loop(){
     
   unsigned long elapsedTimeSinceLastMvmt = (millis()+TIMEOFFSET) - MovementStartTime;
         
-  #if DEBUG 
-  Serial.print(F("elapsedTimeSinceLastMvmt"));
-  Serial.println(elapsedTimeSinceLastMvmt);
-  #endif
 
   if ((elapsedTimeSinceLastMvmt > MovementEndThreshold) && MovementActive){
        MovementActive=false;
@@ -143,7 +135,6 @@ void loop(){
       updatePosition();
 
       sendLocationData(MovementActive);
-        delay(3000);
 
       sleepMode(); 
      }
@@ -168,32 +159,8 @@ void loop(){
 }
 
 void updatePosition(){
-    #if DEBUG
-    Serial.println(F("-------Getting Position Updates"));
-    #endif
-    /*
-      Position curGPSPos = getGPSPosition();
-      Position curCELLPos = getCellPosition();
-      
-      bool positionMoved =false;
-      //Check if anything changed
-      if(curGPSPos.lat!=lastGPSPos.lat||
-         curGPSPos.lon!=lastGPSPos.lon||
-         curCELLPos.lat!=curCELLPos.lat||
-         curCELLPos.lon!=curCELLPos.lon){
-         positionMoved =true;
-              #if DEBUG
-              Serial.print(F("-------POSITION MOVED"));
-              #endif
-        }
-      */
-  
-   
-
       //Update Positions
       lastGPSPos=getGPSPosition();
-      lastCELLPos=getCellPosition();
-
   
   }
 
@@ -220,6 +187,7 @@ void connectToModem(){
    #if DEBUG
    Serial.println(F("-------Cnt MDM"));
    #endif
+   //delay(4000);
  // Set GSM module baud rate
    SerialAT.begin(9600);
    delay(4000);
@@ -227,11 +195,7 @@ void connectToModem(){
   // Restart takes quite some time
   // To skip it, call init() instead of restart()
   modem.restart();
-
-  String modemInfo = modem.getModemInfo();
-   #if DEBUG
-   Serial.println(modemInfo);
-   #endif
+  //modem.init();
    
 }
 
@@ -247,15 +211,9 @@ bool connectToNetwork(){
       Serial.println(F(" fail to connect to networ... retrying"));
       #endif
       
-    int csq = modem.getSignalQuality();
-       #if DEBUG 
-       Serial.print(F("Signal Quality"));
-        Serial.println(csq);
-       #endif 
        retryCnt++;
-    delay(2000);
-    
-  }
+      delay(2000);
+    }
 
  Serial.print(F("RETRYCNT "));
   Serial.print(retryCnt);
@@ -290,22 +248,22 @@ void postData(String dataStr){
      Serial.println(timeSinceMessageSend);
      #endif
 */
-    LastMessageSendTime=(millis()+TIMEOFFSET);
-      #if DEBUG
-      Serial.println("--------------------------");
-      Serial.println("POSTING LOCATION DATA");
-      Serial.println("--------------------------");
-      #endif
+
+   
   //Disable Posting
   //if(DEBUG)return;
 
-  
-  if (!client.connect("cloudsocket.hologram.io", 9999)) {
+    int retryCnt=0;
+  while (!client.connect("cloudsocket.hologram.io", 9999) && retryCnt<RetryLimit) {
       #if DEBUG 
       Serial.println(" fail connect - hologram");
       #endif
-    delay(5000);
-    return;
+      retryCnt++;
+      delay(2000);
+  }
+
+  if(retryCnt==RetryLimit){
+    return false;
   }
   
   // Make a TCP GET request
@@ -331,7 +289,7 @@ void postData(String dataStr){
 void sendLocationData(bool mvmtStart){
     if(DEBUG) Serial.println(F("Sending Location Data"));
     
-    StaticJsonBuffer<200> jsonBuffer;
+    StaticJsonBuffer<190> jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
     root["k"]=CSR_Cred;
     
@@ -339,14 +297,10 @@ void sendLocationData(bool mvmtStart){
     tags.add("loc");
     
    
-    StaticJsonBuffer<150> dataBuffer;
+    StaticJsonBuffer<110> dataBuffer;
     JsonObject& dataRoot = dataBuffer.createObject(); 
      dataRoot["Glt"] =lastGPSPos.lat;
      dataRoot["Gln"] =lastGPSPos.lon;
-
-
-     dataRoot["Clt"] =lastCELLPos.lat;
-     dataRoot["Cln"] =lastCELLPos.lon;
      
      dataRoot["cb"] =modem.getBattPercent();
      dataRoot["mb"]= digitalRead(MAIN_BATT_PIN);
@@ -369,51 +323,30 @@ void sendLocationData(bool mvmtStart){
 
 
 Position getGPSPosition(){
-    float lat,  lon, spd;
-    int alt, viewd_sats,  used_sats;
-      /*
-      
-      retryCnt=0;
-  
-   while(!modem.gprsConnect(apn, "", "") && retryCnt<RetryLimit) {
-      #if DEBUG
-      Serial.println(F(" APN CONN FAIL "));
-      #endif
-    retryCnt++;
-    delay(2000);
-  }
-      */
+    float lat,  lon=0;
 
-      int retryCnt=0;
-      bool fix= modem.getGPS(&lat, &lon, &spd, &alt, &viewd_sats, &used_sats) ;
+      short retryCnt=0;
+      bool fix= modem.getGPS(&lat, &lon) ;
       while (!fix && retryCnt<RetryLimit){
          #if DEBUG
          Serial.println(F("No Sat FIX...Retry"));        
          #endif
          retryCnt++;
-         delay(10000);
+         //delay(10000);
+         modem.maintain();
       }
   
      Position pos;
 
-/*
-     char latChstr[15];
-     char lonChstr[15];
-     
-      dtostrf(lat,12, 6, latChstr);
-      dtostrf(lon,12, 6, lonChstr);
-  */  
      pos.lat = lat;
      pos.lon = lon;
     return pos;
   }
-  
+
+  /*
 Position getCellPosition(){
   String gsmLoc = modem.getGsmLocation();
-    #if DEBUG
-    Serial.println(F("GSM LOC "));
-    Serial.println(gsmLoc);
-    #endif
+
   char gsmCharBuf[gsmLoc.length()+1];
   gsmLoc.toCharArray(gsmCharBuf,gsmLoc.length()+1);
   String results[5];
@@ -429,13 +362,10 @@ Position getCellPosition(){
      pos.lat = results[2];
      pos.lon = results[1];
 
-    #if DEBUG
-    Serial.println(F("CELL Lat lon "));
-    Serial.println( pos.lat);
-        Serial.println( pos.lon);
-    #endif
+
     return pos;
   }
+*/
 
 void sleepMode(){
 
@@ -451,26 +381,17 @@ void sleepMode(){
 
   bool checkForMovement(){
       bool movement = false;
-      int xCurVal,yCurVal,zCurVal=0;
+      short xCurVal,yCurVal,zCurVal=0;
       
-      for(int i=0;i<100;i++){
+      for(short i=0;i<100;i++){
          xCurVal = analogRead(X_PIN);
          yCurVal = analogRead(Y_PIN);
          zCurVal = analogRead(Z_PIN);
 
-        int xDiff=  abs(xCurVal-xVal);
-        int yDiff=  abs(yCurVal-yVal);
-        int zDiff=  abs(zCurVal-zVal);
+        short xDiff=  abs(xCurVal-xVal);
+        short yDiff=  abs(yCurVal-yVal);
+        short zDiff=  abs(zCurVal-zVal);
 
-         #if DEBUG
-          Serial.println("Movement Values Diff");
-          Serial.print("X: ");
-          Serial.println(xDiff);
-          Serial.print("Y: ");
-          Serial.println(yDiff);
-          Serial.print("Z: ");
-          Serial.println(zDiff);
-        #endif
         if (xDiff>mvmtThreshhold ||
             yDiff>mvmtThreshhold||
             zDiff>mvmtThreshhold){
