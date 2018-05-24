@@ -38,7 +38,7 @@ unsigned long TIMEOFFSET=0;
 
 //Movement
 short xVal,yVal,zVal=0;
-short mvmtThreshhold=10;
+short mvmtThreshhold=5;
 
 SoftwareSerial SerialAT(PIN_TX,PIN_RX ); // TX, RX
 TinyGsm modem(SerialAT);
