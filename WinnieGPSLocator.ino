@@ -40,26 +40,13 @@ unsigned long TIMEOFFSET=0;
 short xVal,yVal,zVal=0;
 short mvmtThreshhold=5;
 
+typedef struct{ String lat,lon;} Position;
+Position lastGPSPos;
+
 SoftwareSerial SerialAT(PIN_TX,PIN_RX ); // TX, RX
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 
-typedef struct{ String lat,lon;} Position;
-
-//signitures
-void enableCellPower(bool state);
-void connectToModem();
-bool connectToNetwork();
-void disconnectModem();
-void postData(String dataStr);
-void sendLocationData(bool mvmtStart);
-
-Position getGPSPosition();
-//Position getCellPosition();
-void sleepMode();
-
-bool checkForMovement();
-Position lastGPSPos;
 
 void setup(){
 
@@ -104,17 +91,7 @@ void loop(){
     if(MovementActive ==false){
       
       MovementActive=true;
-      enableCellPower(true);
-      connectToModem();
-      modem.enableGPS();
-      connectToNetwork();
-      updatePosition();
-      
-      sendLocationData(MovementActive);
-
-      sleepMode();
-
-    
+      sendPositionUpdate();
     }
   }
     
@@ -128,15 +105,7 @@ void loop(){
        #endif
        
       MovementActive=false;
-      enableCellPower(true);
-      connectToModem();
-      modem.enableGPS();
-      connectToNetwork();
-      updatePosition();
-
-      sendLocationData(MovementActive);
-
-      sleepMode(); 
+      sendPositionUpdate();
      }
 
 
@@ -158,9 +127,16 @@ void loop(){
   #endif
 }
 
-void updatePosition(){
-      //Update Positions
-      lastGPSPos=getGPSPosition();
+void sendPositionUpdate(){
+    enableCellPower(true);
+    connectToModem();
+    modem.enableGPS();
+    connectToNetwork();
+    lastGPSPos=getGPSPosition();
+    
+    sendLocationData(MovementActive);
+    
+    sleepMode();
   
   }
 
@@ -187,15 +163,14 @@ void connectToModem(){
    #if DEBUG
    Serial.println(F("-------Cnt MDM"));
    #endif
-   //delay(4000);
  // Set GSM module baud rate
    SerialAT.begin(9600);
    delay(4000);
 
   // Restart takes quite some time
   // To skip it, call init() instead of restart()
-  modem.restart();
-  //modem.init();
+  //modem.restart();
+  modem.init();
    
 }
 
@@ -241,18 +216,8 @@ bool connectToNetwork(){
   }
 
 void postData(String dataStr){
-/*
-    unsigned long timeSinceMessageSend = (millis()+TIMEOFFSET) - LastMessageSendTime;
-     #if DEBUG 
-     Serial.print(F("Time Since Last MSG SND"));
-     Serial.println(timeSinceMessageSend);
-     #endif
-*/
 
    
-  //Disable Posting
-  //if(DEBUG)return;
-
     int retryCnt=0;
   while (!client.connect("cloudsocket.hologram.io", 9999) && retryCnt<RetryLimit) {
       #if DEBUG 
@@ -263,7 +228,7 @@ void postData(String dataStr){
   }
 
   if(retryCnt==RetryLimit){
-    return false;
+    return;
   }
   
   // Make a TCP GET request
@@ -324,7 +289,8 @@ void sendLocationData(bool mvmtStart){
 
 Position getGPSPosition(){
     float lat,  lon=0;
-
+    delay(15000);
+         
       short retryCnt=0;
       bool fix= modem.getGPS(&lat, &lon) ;
       while (!fix && retryCnt<RetryLimit){
@@ -332,10 +298,12 @@ Position getGPSPosition(){
          Serial.println(F("No Sat FIX...Retry"));        
          #endif
          retryCnt++;
-         //delay(10000);
+         delay(2000);
          modem.maintain();
+         fix= modem.getGPS(&lat, &lon);
       }
-  
+
+
      Position pos;
 
      pos.lat = lat;
@@ -373,8 +341,8 @@ void sleepMode(){
          Serial.println("Power Down");
          #endif
      
-         modem.disableGPS();
-         modem.gprsDisconnect();
+        // modem.disableGPS();
+        // modem.gprsDisconnect();
           SerialAT.end();
          enableCellPower(false);
   }
@@ -401,13 +369,13 @@ void sleepMode(){
              break;
         }
   
-        delay(10);
+        delay(20);
       }
 
-      //Update Values
-         xVal = xCurVal;    
-         yVal = yCurVal;    
-        zVal = zCurVal; 
-         return movement;
+    //Update Values
+    xVal = xCurVal;    
+    yVal = yCurVal;    
+    zVal = zCurVal; 
+    return movement;
    }
 
