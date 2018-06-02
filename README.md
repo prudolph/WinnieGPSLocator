@@ -13,4 +13,5 @@ An Arduino based vehicle location device with movement detection and text alerts
 | PowerBoost 1000 Charger                            | [$19.95](https://www.adafruit.com/product/2465)  
 
 
+![Wiring Diagram](https://raw.githubusercontent.com/prudolph/WinnieGPSLocator/master/wiringDiagram.jpg "Wiring Diagram")
 
